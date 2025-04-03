@@ -9,7 +9,7 @@
 
 // Wi-Fi & API
 const char* ssid = "Huy va Nhi";
-const char* password = "matkhau123";
+const char* password = "okokok";
 const char* baseUrl = "https://huykhong.com/IOT/chart.php?symbol=";
 
 // Chart symbols
