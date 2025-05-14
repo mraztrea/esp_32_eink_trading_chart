@@ -43,5 +43,6 @@ echo json_encode([
     "lp" => $lastClose,
     "hi" => $hi,
     "lo" => $lo,
-    "c" => $prices
+    "c" => $prices,
+    "time" => date("Y-m-d H:i")
 ], JSON_PRETTY_PRINT);

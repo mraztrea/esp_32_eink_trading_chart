@@ -8,8 +8,8 @@
 #include <Preferences.h>
 
 // Wi-Fi & API
-const char *ssid = "Z117_3";
-const char *password = "chiquynhbo";
+const char *ssid = "thanhhome";
+const char *password = "quynhmiu";
 const char *baseUrl = "https://xehoi.pro/chart.php?symbol=";
 
 // Chart symbols
@@ -19,6 +19,7 @@ const int symbolCount = sizeof(symbols) / sizeof(symbols[0]);
 const int intervalCount = sizeof(intervals) / sizeof(intervals[0]);
 
 Preferences prefs;
+String updateTime = ""; // Thêm biến lưu thời gian cập nhật
 
 struct Candle
 {
@@ -116,6 +117,7 @@ void fetchChartData()
     lastPrice = doc["lp"];
     priceMax = doc["hi"];
     priceMin = doc["lo"];
+    updateTime = doc["time"].as<String>(); // Đọc thời gian cập nhật
 
     JsonArray arr = doc["c"];
     candleCount = min((int)arr.size(), maxCandles);
@@ -252,6 +254,11 @@ void drawChart(const char *symbol, const char *interval, float lastPrice, float 
     display.setTextColor(GxEPD_WHITE);
     display.print((int)lastPrice);
     display.setTextColor(GxEPD_BLACK); // khôi phục
+
+    // Hiển thị thời gian cập nhật
+    display.setFont(&FreeSans9pt7b);
+    display.setCursor(240, 280);
+    display.print(updateTime);
 
   } while (display.nextPage());
 }
