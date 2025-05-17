@@ -53,6 +53,72 @@ float priceMin = 999999;
 float lastPrice = 0;
 bool fetchFailed = false; // Biến đánh dấu thất bại khi fetchChartData
 
+bool startSmartConfig(const char *symbol, const char *interval) {
+  // Đặt ESP32 vào chế độ Station
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.disconnect();
+  
+  // Hiển thị thông báo SmartConfig trên màn hình
+  showLoadingMessage(symbol, interval, 
+                    "Che do SmartConfig da bat", 
+                    "Su dung app ESP Touch", 
+                    "de cau hinh WiFi");
+  
+  // Bắt đầu SmartConfig
+  Serial.println("Bắt đầu chế độ SmartConfig");
+  WiFi.beginSmartConfig();
+  
+  // Chờ nhận cấu hình từ điện thoại (tối đa 2 phút)
+  Serial.println("Đang chờ SmartConfig...");
+  int timeout = 120; // 120 giây = 2 phút
+  int count = 0;
+  
+  while (!WiFi.smartConfigDone() && count < timeout) {
+    delay(1000);
+    Serial.print(".");
+    count++;
+    
+    // Cập nhật thông báo mỗi 10 giây
+    if (count % 10 == 0) {
+      showLoadingMessage(symbol, interval, 
+                        "Dang cho SmartConfig...", 
+                        "Thoi gian con lai: " + String(timeout - count) + "s", 
+                        "Su dung app ESP Touch");
+    }
+  }
+  
+  if (WiFi.smartConfigDone()) {
+    Serial.println("\nSmartConfig đã nhận được cấu hình!");
+    
+    // Chờ kết nối WiFi
+    Serial.println("Đang kết nối WiFi...");
+    int wifiTimeout = 30; // 30 giây
+    count = 0;
+    
+    while (WiFi.status() != WL_CONNECTED && count < wifiTimeout) {
+      delay(1000);
+      Serial.print(".");
+      count++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nĐã kết nối thành công đến WiFi qua SmartConfig!");
+      Serial.printf("SSID: %s, IP: %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+      
+      // Lưu thông tin WiFi vào bộ nhớ để sử dụng sau này nếu cần
+      // Hiện tại chưa cần lưu vì mỗi lần khởi động sẽ quét lại
+      
+      return true;
+    } else {
+      Serial.println("\nKhông thể kết nối đến WiFi sau khi SmartConfig!");
+      return false;
+    }
+  } else {
+    Serial.println("\nHết thời gian chờ SmartConfig!");
+    return false;
+  }
+}
+
 bool connectToAvailableWiFi() {
   int networksFound = WiFi.scanNetworks();
   Serial.println("Quét tìm mạng WiFi...");
@@ -136,11 +202,30 @@ void setup()
   // Hiển thị thông báo đang kết nối WiFi
   showLoadingMessage(symbol, interval, "Dang quet WiFi...", "", "");
 
-  if (!connectToAvailableWiFi()) {
-    showLoadingMessage(symbol, interval, "Khong tim thay WiFi", "Vui long kiem tra lai", "");
-    delay(5000);
-    esp_deep_sleep_start();
-    return;
+  // Thử kết nối với các mạng đã cấu hình
+  bool connected = connectToAvailableWiFi();
+  
+  // Nếu không kết nối được, chuyển sang chế độ SmartConfig
+  if (!connected) {
+    showLoadingMessage(symbol, interval, 
+                      "Khong tim thay WiFi", 
+                      "Chuyen sang SmartConfig", 
+                      "trong 3 giay...");
+    delay(3000);
+    
+    // Bắt đầu SmartConfig
+    connected = startSmartConfig(symbol, interval);
+    
+    // Nếu vẫn không kết nối được sau SmartConfig
+    if (!connected) {
+      showLoadingMessage(symbol, interval, 
+                        "SmartConfig that bai", 
+                        "Vui long thu lai sau", 
+                        "");
+      delay(5000);
+      esp_deep_sleep_start();
+      return;
+    }
   }
 
   // Hiển thị thông báo đang tải dữ liệu với thông tin WiFi
