@@ -3,7 +3,7 @@ header('Content-Type: application/json');
 
 $symbol = isset($_GET['symbol']) ? $_GET['symbol'] : 'BTCUSDT';
 $interval = isset($_GET['interval']) ? $_GET['interval'] : '1d';
-$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 20;
+$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 31;
 
 // Binance API endpoint cho dữ liệu candlestick
 $url = "https://api.binance.com/api/v3/klines?symbol=" . urlencode($symbol) . "&interval=$interval&limit=$limit";

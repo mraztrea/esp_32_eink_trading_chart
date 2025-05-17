@@ -8,8 +8,17 @@
 #include <Preferences.h>
 
 // Wi-Fi & API
-const char *ssid = "thanhhome";
-const char *password = "quynhmiu";
+struct WiFiNetwork {
+    const char* ssid;
+    const char* password;
+};
+
+const WiFiNetwork networks[] = {
+    // {"Z117_3", "chiquynhbo"},
+    {"thanhhome", "quynhmiu"},
+    {"HRI", "hri@1008"}
+};
+const int networkCount = sizeof(networks) / sizeof(networks[0]);
 const char *baseUrl = "https://xehoi.pro/chart.php?symbol=";
 
 // Chart symbols
@@ -34,7 +43,7 @@ struct Candle
 GxEPD2_3C<GxEPD2_420_Z98c, GxEPD2_420_Z98c::HEIGHT> display(
     GxEPD2_420_Z98c(CS, DC, RST, BUSY));
 
-const int maxCandles = 40;
+const int maxCandles = 50;
 Candle candles[maxCandles];
 int candleCount = 0;
 char symbol[10];
@@ -42,6 +51,50 @@ char interval[5];
 float priceMax = 0;
 float priceMin = 999999;
 float lastPrice = 0;
+bool fetchFailed = false; // Biến đánh dấu thất bại khi fetchChartData
+
+bool connectToAvailableWiFi() {
+  int networksFound = WiFi.scanNetworks();
+  Serial.println("Quét tìm mạng WiFi...");
+  
+  if (networksFound == 0) {
+    Serial.println("Không tìm thấy mạng WiFi nào");
+    return false;
+  }
+
+  // Kiểm tra từng mạng đã quét được
+  for (int i = 0; i < networksFound; i++) {
+    String scannedSSID = WiFi.SSID(i);
+    
+    // So sánh với danh sách mạng đã cấu hình
+    for (int j = 0; j < networkCount; j++) {
+      if (scannedSSID.equals(networks[j].ssid)) {
+        Serial.printf("Thử kết nối đến %s\n", networks[j].ssid);
+        
+        WiFi.begin(networks[j].ssid, networks[j].password);
+        
+        // Chờ kết nối trong 10 giây
+        int attempts = 0;
+        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+          delay(500);
+          Serial.print(".");
+          attempts++;
+        }
+        
+        if (WiFi.status() == WL_CONNECTED) {
+          Serial.printf("\nĐã kết nối thành công đến %s\n", networks[j].ssid);
+          return true;
+        }
+        
+        Serial.println("\nKết nối thất bại, thử mạng tiếp theo");
+        WiFi.disconnect();
+      }
+    }
+  }
+  
+  Serial.println("Không tìm thấy mạng WiFi khả dụng nào trong danh sách");
+  return false;
+}
 
 void setup()
 {
@@ -58,15 +111,22 @@ void setup()
   prefs.begin("chart", false);
   int symbolIndex = prefs.getInt("symbolIndex", 0);
   int intervalIndex = prefs.getInt("intervalIndex", 0);
+  fetchFailed = prefs.getBool("fetchFailed", false); // Đọc trạng thái thất bại từ lần trước
 
-  // Nếu wake từ nút → thay đổi interval
+  // Nếu wake từ nút → thay đổi interval nếu lần trước không thất bại
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0)
   {
-    intervalIndex = (intervalIndex + 1) % intervalCount;
+    if (!fetchFailed) {
+      // Chỉ thay đổi interval nếu lần trước không thất bại
+      intervalIndex = (intervalIndex + 1) % intervalCount;
+    } else {
+      Serial.println("Lần trước fetch thất bại, không thay đổi interval");
+    }
   }
 
   prefs.putInt("symbolIndex", symbolIndex);
   prefs.putInt("intervalIndex", intervalIndex);
+  prefs.putBool("fetchFailed", false); // Reset trạng thái thất bại trước khi fetch mới
   prefs.end();
 
   strcpy(symbol, symbols[symbolIndex]);
@@ -74,19 +134,18 @@ void setup()
   Serial.printf("🖼 Hiển thị chart: %s (%s)\n", symbol, interval);
 
   // Hiển thị thông báo đang kết nối WiFi
-  showLoadingMessage(symbol, interval, "Dang ket noi WiFi...", "", "");
+  showLoadingMessage(symbol, interval, "Dang quet WiFi...", "", "");
 
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(".");
+  if (!connectToAvailableWiFi()) {
+    showLoadingMessage(symbol, interval, "Khong tim thay WiFi", "Vui long kiem tra lai", "");
+    delay(5000);
+    esp_deep_sleep_start();
+    return;
   }
-  Serial.println("\nWi-Fi OK");
 
   // Hiển thị thông báo đang tải dữ liệu với thông tin WiFi
   String status = "Da ket noi WiFi";
-  String ssidInfo = "SSID: " + String(ssid);
+  String ssidInfo = "SSID: " + WiFi.SSID();
   String ipInfo = "IP: " + WiFi.localIP().toString();
   showLoadingMessage(symbol, interval, "Dang tai du lieu moi...", status, ssidInfo, ipInfo);
 
@@ -100,19 +159,22 @@ void setup()
 
 void loop() {}
 
-void fetchChartData()
-{
-  String url = String(baseUrl) + symbol + "&interval=" + interval;
+bool tryFetchChartData(int retryCount) {
+  String url = String(baseUrl) + symbol + "&interval=" + interval + "&limit=31";
   HTTPClient http;
   http.begin(url);
   int httpCode = http.GET();
-
-  if (httpCode == 200)
-  {
+  
+  Serial.printf("Lần thử %d: HTTP code %d\n", retryCount + 1, httpCode);
+  
+  if (httpCode == 200) {
     String payload = http.getString();
     StaticJsonDocument<8192> doc;
-    if (deserializeJson(doc, payload))
-      return;
+    if (deserializeJson(doc, payload)) {
+      Serial.println("Lỗi parse JSON");
+      http.end();
+      return false;
+    }
 
     lastPrice = doc["lp"];
     priceMax = doc["hi"];
@@ -122,17 +184,55 @@ void fetchChartData()
     JsonArray arr = doc["c"];
     candleCount = min((int)arr.size(), maxCandles);
 
-    for (int i = 0; i < candleCount; i++)
-    {
+    for (int i = 0; i < candleCount; i++) {
       JsonArray row = arr[i];
       candles[i].open = row[0];
       candles[i].high = row[1];
       candles[i].low = row[2];
       candles[i].close = row[3];
     }
+    
+    http.end();
+    return true;
   }
-
+  
   http.end();
+  return false;
+}
+
+void fetchChartData()
+{
+  fetchFailed = true; // Mặc định là thất bại, chỉ đổi khi thành công
+  
+  // Thử tối đa 3 lần
+  const int maxRetries = 3;
+  bool success = false;
+  
+  for (int i = 0; i < maxRetries; i++) {
+    success = tryFetchChartData(i);
+    if (success) {
+      // Nếu thành công, thoát khỏi vòng lặp
+      break;
+    }
+    
+    if (i < maxRetries - 1) {
+      // Chỉ delay giữa các lần thử, không phải lần cuối
+      Serial.printf("Thử lại lần %d sau 1 giây...\n", i + 2);
+      delay(1000); // Delay 1 giây trước khi thử lại
+    }
+  }
+  
+  // Cập nhật trạng thái và lưu vào bộ nhớ
+  fetchFailed = !success;
+  prefs.begin("chart", false);
+  prefs.putBool("fetchFailed", fetchFailed);
+  prefs.end();
+  
+  if (success) {
+    Serial.println("Fetch dữ liệu thành công!");
+  } else {
+    Serial.println("Fetch dữ liệu thất bại sau 3 lần thử!");
+  }
 }
 
 void showLoadingMessage(const char *symbol, const char *interval, const String &message,
@@ -206,9 +306,9 @@ void drawChart(const char *symbol, const char *interval, float lastPrice, float 
     display.printf("Last: %.1f", lastPrice);
 
     // Chart area
-    int chartX = 10, chartY = 30, chartW = 320, chartH = 230;
+    int chartX = 30, chartY = 30, chartW = 320, chartH = 230;
     float priceRange = priceMax - priceMin;
-    int candleWidth = 10;
+    int candleWidth = 6;
 
     for (int i = 0; i < count; i++)
     {
