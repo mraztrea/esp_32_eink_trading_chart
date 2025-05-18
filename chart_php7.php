@@ -1,5 +1,6 @@
 <?php
 date_default_timezone_set('Asia/Ho_Chi_Minh');
+
 header('Content-Type: application/json');
 
 $symbol = isset($_GET['symbol']) ? $_GET['symbol'] : 'BTCUSDT';
@@ -9,16 +10,25 @@ $limit = isset($_GET['limit']) ? intval($_GET['limit']) : 31;
 // Binance API endpoint cho dữ liệu candlestick
 $url = "https://api.binance.com/api/v3/klines?symbol=" . urlencode($symbol) . "&interval=$interval&limit=$limit";
 
-$response = file_get_contents($url);
-$data = json_decode($response, true);
-
-// Kiểm tra lỗi
-if ($data === null || isset($data['code'])) {
-    echo json_encode(["error" => "API error", "msg" => $data['msg'] ?? 'unknown']);
+$response = @file_get_contents($url);
+if ($response === false) {
+    echo json_encode(array("error" => "Failed to fetch data from Binance API"));
     exit;
 }
 
-$prices = [];
+$data = json_decode($response, true);
+if (json_last_error() !== JSON_ERROR_NONE) {
+    echo json_encode(array("error" => "Failed to parse JSON response"));
+    exit;
+}
+
+// Kiểm tra lỗi
+if ($data === null || isset($data['code'])) {
+    echo json_encode(array("error" => "API error", "msg" => isset($data['msg']) ? $data['msg'] : 'unknown'));
+    exit;
+}
+
+$prices = array();
 $hi = 0;
 $lo = 999999;
 $lastClose = 0;
@@ -36,14 +46,14 @@ foreach ($data as $candle) {
     $lo = min($lo, $l);
     $lastClose = $c;
 
-    $prices[] = [$o, $h, $l, $c];
+    $prices[] = array($o, $h, $l, $c);
 }
 
-echo json_encode([
+echo json_encode(array(
     "s" => $symbol,
     "lp" => $lastClose,
     "hi" => $hi,
     "lo" => $lo,
     "c" => $prices,
     "time" => date("Y-m-d H:i")
-], JSON_PRETTY_PRINT);
+), JSON_PRETTY_PRINT);

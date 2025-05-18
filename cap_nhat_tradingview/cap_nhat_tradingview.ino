@@ -248,6 +248,9 @@ bool tryFetchChartData(int retryCount) {
   String url = String(baseUrl) + symbol + "&interval=" + interval + "&limit=31";
   HTTPClient http;
   http.begin(url);
+  http.setTimeout(10000); // Set timeout 10 giây
+  
+  Serial.printf("Lần thử %d: Đang fetch dữ liệu...\n", retryCount + 1);
   int httpCode = http.GET();
   
   Serial.printf("Lần thử %d: HTTP code %d\n", retryCount + 1, httpCode);
@@ -255,8 +258,17 @@ bool tryFetchChartData(int retryCount) {
   if (httpCode == 200) {
     String payload = http.getString();
     StaticJsonDocument<8192> doc;
-    if (deserializeJson(doc, payload)) {
-      Serial.println("Lỗi parse JSON");
+    DeserializationError error = deserializeJson(doc, payload);
+    
+    if (error) {
+      Serial.printf("Lỗi parse JSON: %s\n", error.c_str());
+      http.end();
+      return false;
+    }
+
+    // Kiểm tra dữ liệu có hợp lệ không
+    if (!doc.containsKey("lp") || !doc.containsKey("hi") || !doc.containsKey("lo") || !doc.containsKey("c")) {
+      Serial.println("Dữ liệu JSON không đầy đủ");
       http.end();
       return false;
     }
@@ -264,13 +276,24 @@ bool tryFetchChartData(int retryCount) {
     lastPrice = doc["lp"];
     priceMax = doc["hi"];
     priceMin = doc["lo"];
-    updateTime = doc["time"].as<String>(); // Đọc thời gian cập nhật
+    updateTime = doc["time"].as<String>();
 
     JsonArray arr = doc["c"];
+    if (arr.size() == 0) {
+      Serial.println("Không có dữ liệu nến");
+      http.end();
+      return false;
+    }
+
     candleCount = min((int)arr.size(), maxCandles);
 
     for (int i = 0; i < candleCount; i++) {
       JsonArray row = arr[i];
+      if (row.size() < 4) {
+        Serial.printf("Dữ liệu nến %d không đầy đủ\n", i);
+        http.end();
+        return false;
+      }
       candles[i].open = row[0];
       candles[i].high = row[1];
       candles[i].low = row[2];
@@ -289,26 +312,30 @@ void fetchChartData()
 {
   fetchFailed = true; // Mặc định là thất bại, chỉ đổi khi thành công
   
-  // Thử tối đa 3 lần
-  const int maxRetries = 3;
+  // Thử tối đa 5 lần với delay tăng dần
+  const int maxRetries = 5;
   bool success = false;
   
   for (int i = 0; i < maxRetries; i++) {
     success = tryFetchChartData(i);
     if (success) {
-      // Nếu thành công, thoát khỏi vòng lặp
+      fetchFailed = false;
       break;
     }
     
     if (i < maxRetries - 1) {
-      // Chỉ delay giữa các lần thử, không phải lần cuối
-      Serial.printf("Thử lại lần %d sau 1 giây...\n", i + 2);
-      delay(1000); // Delay 1 giây trước khi thử lại
+      // Tăng thời gian delay giữa các lần retry
+      int delayTime = (i + 1) * 2000; // 2s, 4s, 6s, 8s
+      String message = "Lan thu " + String(i + 2) + "/" + String(maxRetries) + "...";
+      showLoadingMessage(symbol, interval, message, 
+                        "Dang thu lai sau " + String(delayTime/1000) + "s", 
+                        "Vui long doi...", "");
+      Serial.printf("Thử lại lần %d sau %d giây...\n", i + 2, delayTime/1000);
+      delay(delayTime);
     }
   }
   
   // Cập nhật trạng thái và lưu vào bộ nhớ
-  fetchFailed = !success;
   prefs.begin("chart", false);
   prefs.putBool("fetchFailed", fetchFailed);
   prefs.end();
@@ -316,7 +343,13 @@ void fetchChartData()
   if (success) {
     Serial.println("Fetch dữ liệu thành công!");
   } else {
-    Serial.println("Fetch dữ liệu thất bại sau 3 lần thử!");
+    Serial.println("Fetch dữ liệu thất bại sau tất cả các lần thử!");
+    // Hiển thị thông báo lỗi
+    showLoadingMessage(symbol, interval, 
+                      "Khong the lay du lieu", 
+                      "Vui long thu lai sau", 
+                      "Se tu dong retry trong 15p");
+    delay(5000); // Hiển thị thông báo lỗi 5 giây
   }
 }
 
